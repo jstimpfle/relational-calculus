@@ -1,0 +1,16 @@
+lecture algebra1 "Algebra 1"
+lecture proglang1 "Introduction to Programming Languages"
+
+student john "John Doe"
+student jane "Jane Dane"
+student jack "Jack of all Trades"
+
+registered john algebra1
+registered jane algebra1
+registered jane proglang1
+registered jack algebra1
+registered jack proglang1
+
+immatriculated john 2016
+immatriculated jane 2016
+immatriculated jack 2015
