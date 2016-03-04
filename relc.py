@@ -4,13 +4,14 @@ import sys
 import sqlite3
 
 class Predicate:
-    def __init__(self, p, args):
+    def __init__(self, p, args, neg=False):
         self.p = p
         self.args = args
+        self.neg = neg
     def __str__(self):
-        return self.p + '(' + ', '.join(self.args) + ')'
+        return ('!' if self.neg else '') + self.p + '(' + ', '.join(self.args) + ')'
     def __repr__(self):
-        return self.p + '(' + ', '.join(self.args) + ')'
+        return ('!' if self.neg else '') + self.p + '(' + ', '.join(self.args) + ')'
 
 class LookAhead:
     def __init__(self, it):
@@ -151,6 +152,12 @@ def identifier(stream):
             return stream.pop()
 
 def predicate(stream):
+    c = stream.get_popcount()
+    neg = string("!")(stream)
+    if neg is None:
+        if not stream.undo(c):
+            assert False
+        neg = False
     p = identifier(stream)
     if p is None:
         return None
@@ -163,7 +170,7 @@ def predicate(stream):
     x = parenright(stream)
     if x is None:
         return None
-    return Predicate(p, args)
+    return Predicate(p, args, neg)
 
 def conjunction(stream):
     return sepbyignore(string('&&'), predicate)(stream)
@@ -192,7 +199,7 @@ def makesqlconj(schema, wants, conj):
             raise Exception('No such table:', p.p)
         if len(p.args) != len(schema[p.p]):
             raise Exception('Wrong number of arguments: {}'.format(p))
-    for i, p in enumerate(conj):
+    for i, p in enumerate(p for p in conj if p.neg == False):
         pname = '{}{}'.format(p.p, i)
         froms.append((p.p, pname))
         for j, v in enumerate(p.args):
@@ -205,9 +212,13 @@ def makesqlconj(schema, wants, conj):
             if v not in preds:
                 preds[v] = set()
             preds[v].add(coords)
+    for p in (p for p in conj if p.neg):
+        for v in (v for v in p.args if v != '*' and not v.startswith('"')):
+            if v not in preds:
+                raise Exception('variable %s only bound in a negative clause in conjunction %s' % (v,conj))
     for v in wants:
         if v not in preds:
-            raise Exception('variable %s not bound in conjunction %s' % (v,preds))
+            raise Exception('variable %s not bound in conjunction %s' % (v,conj))
     result = 'SELECT DISTINCT'
     xs = []
     for v in wants:
@@ -225,6 +236,14 @@ def makesqlconj(schema, wants, conj):
             for y in same[1:]:
                 if x != y:
                     result += '\n\tAND {}.{} = {}.{}'.format(x[0],x[1],y[0],y[1])
+    for p in (p for p in conj if p.neg):
+        result += '\n\tAND NOT EXISTS(SELECT 1 FROM {} WHERE 1'.format(p.p)
+        for i, v in enumerate(v for v in p.args if v != '*'):
+            if v.startswith('"'):
+                result += '\n\t\t\tAND {} = {}'.format(schema[p.p][i], v)
+            else:
+                result += '\n\t\t\tAND {} = {}.{}'.format(schema[p.p][i],list(preds[v])[0][0],list(preds[v])[0][1])
+        result += '\n\t)'
     result += "\nORDER BY {} ASC".format(', '.join(wants))
     return result
 
@@ -235,7 +254,7 @@ def makesql(schema, wants, rel):
 def lex(query):
     import re
     out = []
-    exprs = [r'[a-zA-Z][a-zA-Z0-9]*', r'\*', r'"[^"]*"', r',', r'&&', r'\|\|',r'\(',r'\)']
+    exprs = [r'!', r'[a-zA-Z][a-zA-Z0-9]*', r'\*', r'"[^"]*"', r',', r'&&', r'\|\|',r'\(',r'\)']
     while True:
         query = query.strip()
         if not query:
