@@ -13,7 +13,7 @@ possibly additional string constants.
 Example query on the example.txt database:
 
 ```
-$ ./relc.py S,SD,L,LD 'student(S,SD) && immatriculated(S,"2016") && lecture(L,LD) && registered(S,L)' < example.txt
+$ ./relq S,SD,L,LD 'student(S,SD) && immatriculated(S,"2016") && lecture(L,LD) && registered(S,L)' < example.txt
 jane    "Jane Dane"     algebra1        "Algebra 1"
 jane    "Jane Dane"     proglang1       "Introduction to Programming Languages"
 john    "John Doe"      algebra1        "Algebra 1"
@@ -25,7 +25,7 @@ If some column is not interesting an asterisk can be used
 instead of a variable name.
 
 ```
-$ ./relc.py S,SD 'student(S,SD) && registered(S,*)' < example.txt 
+$ ./relq S,SD 'student(S,SD) && registered(S,*)' < example.txt 
 jack	"Jack of all Trades"
 jane	"Jane Dane"
 john	"John Doe"
@@ -36,7 +36,7 @@ This queries all students that are registered for any lecture at all.
 Negation is done with an exclamation mark:
 
 ```
-$ ./relc.py S 'student(S,*) && !registered(S,"proglang1")' < example.txt
+$ ./relq S 'student(S,*) && !registered(S,"proglang1")' < example.txt
 john
 ```
 
