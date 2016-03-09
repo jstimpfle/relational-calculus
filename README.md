@@ -1,14 +1,12 @@
 # relational-calculus
 
-This is a quick hack to evaluate if relational calculus
-(specifically, Domain Relational Calculus) can be better
-suited than SQL for most simple queries with a few joins,
-and without aggregation.
+This is a quick hack to evaluate if relational calculus (specifically, Domain
+Relational Calculus) can be better suited than SQL for most simple queries with
+a few joins, and without aggregation.
 
-Two command-line arguments are expected. The first gives
-the query variables in output order. The second gives a
-query in DRC using a superset of the query variables and
-possibly additional string constants.
+Two command-line arguments are expected. The first gives the query variables in
+output order. The second gives a query in DRC using a superset of the query
+variables and possibly additional string constants.
 
 Example query on the example.txt database:
 
@@ -40,5 +38,15 @@ $ ./relq S 'student(S,*) && !registered(S,"proglang1")' < example.txt
 john
 ```
 
-Important features are still missing, like integer values,
-schema syntax and comparison predicates.
+External variable bindings can be given with a `-vVARIABLE=VALUE` argument:
+
+```
+$ L=proglang1
+$ ./relq -vL="$L" S 'student(S,*) && !registered(S,L)' < example.txt
+john
+```
+
+This is to free the caller from the burden of escaping the value correctly.
+
+Important features are still missing, like integer values, schema syntax and
+comparison predicates.

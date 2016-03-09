@@ -190,7 +190,14 @@ class Schema:
     def getheader(self, tablename):
         return self.tables.get(tablename)
 
-def makesqlconj(schema, wants, conj):
+def sql_string_literal(val):
+    val = val.replace('\\', '\\\\')
+    val = val.replace('"', '\\"')
+    val = '"' + val + '"'
+    return val
+
+
+def makesqlconj(schema, wants, conj, bindings):
     froms = []
     bound = []
     preds = dict()
@@ -206,15 +213,16 @@ def makesqlconj(schema, wants, conj):
             colname = schema[p.p][j]
             coords = pname, colname
             if v == '*':
-                continue
-            if v.startswith('"') or v.isdigit():
+                pass
+            elif v.startswith('"') or v.isdigit():
                 bound.append((pname, colname, v))
-            if v not in preds:
-                preds[v] = set()
-            preds[v].add(coords)
+            else:
+                if v not in preds:
+                    preds[v] = set()
+                preds[v].add(coords)
     for p in (p for p in conj if p.neg):
-        for v in (v for v in p.args if v != '*' and not v.startswith('"')):
-            if v not in preds:
+        for v in p.args:
+            if v != '*' and not v.startswith('"') and v not in preds and v not in bindings:
                 raise Exception('variable %s only bound in a negative clause in conjunction %s' % (v,conj))
     for v in wants:
         if v not in preds:
@@ -232,23 +240,29 @@ def makesqlconj(schema, wants, conj):
         result += '\n\tAND {}.{} = {}'.format(t, c, v)
     for same in preds.values():
         same = list(same)
-        for x in same:
-            for y in same[1:]:
-                if x != y:
-                    result += '\n\tAND {}.{} = {}.{}'.format(x[0],x[1],y[0],y[1])
+        for x, y in zip(same, same[1:]):
+            result += '\n\tAND {}.{} = {}.{}'.format(x[0],x[1],y[0],y[1])
+    for var, val in bindings.items():
+        if var in preds:
+            pname, colname = next(iter(preds[var]))
+            result += '\n\tAND {}.{} = {}'.format(pname, colname, sql_string_literal(val))
     for p in (p for p in conj if p.neg):
         result += '\n\tAND NOT EXISTS(SELECT 1 FROM {} WHERE 1'.format(p.p)
         for i, v in enumerate(v for v in p.args if v != '*'):
             if v.startswith('"'):
                 result += '\n\t\t\tAND {} = {}'.format(schema[p.p][i], v)
+            elif v in bindings and not v in preds:
+                result += '\n\t\t\tAND {} = {}'.format(schema[p.p][i], sql_string_literal(bindings[v]))
             else:
-                result += '\n\t\t\tAND {} = {}.{}'.format(schema[p.p][i],list(preds[v])[0][0],list(preds[v])[0][1])
+                assert v in preds
+                pname, colname = next(iter(preds[v]))
+                result += '\n\t\t\tAND {} = {}.{}'.format(schema[p.p][i], pname, colname)
         result += '\n\t)'
     result += "\nORDER BY {} ASC".format(', '.join(wants))
     return result
 
-def makesql(schema, wants, rel):
-    sqls = [makesqlconj(schema, wants, conj) for conj in rel]
+def makesql(schema, wants, rel, bindings):
+    sqls = [makesqlconj(schema, wants, conj, bindings) for conj in rel]
     return '\nUNION\n'.join(sqls)
 
 def lex(query):
@@ -294,13 +308,17 @@ def splitline(line):
         return None
     return out
 
+def escapetoken(x):
+    if len(x.split(None, 1)) > 1:
+        x = x.replace('\\','\\\\')
+        x = x.replace('"', '\\"')
+        x = '"' + x + '"'
+    return x
+
 def joinline(args):
     out = []
     for x in args:
-        x = x.replace('\\','\\\\')
-        x = x.replace('"', '\\"')
-        if len(x.split(None, 1)) > 1:
-            x = '"' + x + '"'
+        x = escapetoken(x)
         out.append(x)
     return '\t'.join(out)
 
@@ -337,12 +355,30 @@ def debug(*args):
     if dodebug:
         print(*args)
 
+def parse_binding(x):
+    if '=' in x:
+        k, v = x.split('=', 1)
+        if k[:1].isalpha() and k.isalnum():
+            return k, v
+    return None
+
 if __name__ == '__main__':
+    bindings = {}
+
     args = tuple(sys.argv[1:])
 
-    if args and args[0] == '--debug':
-        dodebug = True
-        args = args[1:]
+    while args and args[0].startswith('-'):
+        if args[0] == '--debug':
+            dodebug = True
+            args = args[1:]
+        elif args[0].startswith('-v'):
+            x = parse_binding(args[0][2:])
+            if x is None:
+                raise Exception("Invalid variable binding: " + args[0])
+            bindings[x[0]] = x[1]
+            args = args[1:]
+        else:
+            raise Exception("Unrecognized command line argument: " + args[0])
 
     if len(args) != 2:
         print("""\
@@ -367,7 +403,7 @@ Example:
     build_db(sys.stdin)
 
     debug()
-    sql = makesql(schema, wants, calc)
+    sql = makesql(schema, wants, calc, bindings)
     debug(sql)
     debug()
 
