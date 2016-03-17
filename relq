@@ -288,21 +288,26 @@ def lex(query):
 def splitline(line):
     out = []
     w = ''
+    started = False
     escaped = False
     quoted = False
     for c in line:
         if escaped:
             w += c
+            started = True
             escaped = False
         elif c == '\\':
             escaped = True
         elif c == '"':
             quoted = not quoted
+            started = True
         elif quoted or not c.isspace():
             w += c
-        elif w:
+            started = True
+        elif started:
             out.append(w)
             w = ''
+            started = False
     if quoted or escaped:
         print('Unexpected end of line: ' + line, file=sys.stderr)
         return None
@@ -325,6 +330,7 @@ def joinline(args):
 schema = {}
 conn = sqlite3.connect(':memory:')
 dodebug = False
+pretty = False
 
 def build_db(lines):
     defaultcolnames = list('abcdefghijklmnopqrstuvwxyz')
@@ -345,7 +351,7 @@ def build_db(lines):
             debug(sql)
             conn.execute(sql)
         if len(values) != len(schema[tblname]):
-            raise Exception('wrong number of values: ' + line)
+            raise Exception('wrong number of values: ' + line + "   " + str(values))
         sql = 'INSERT INTO {} VALUES ({})'.format(tblname, ', '.join('?'*len(values)))
         conn.execute(sql, values)
     return schema
@@ -377,6 +383,9 @@ if __name__ == '__main__':
                 raise Exception("Invalid variable binding: " + args[0])
             bindings[x[0]] = x[1]
             args = args[1:]
+        elif args[0] == '--pretty':
+            pretty = True
+            args = args[1:]
         else:
             raise Exception("Unrecognized command line argument: " + args[0])
 
@@ -407,5 +416,17 @@ Example:
     debug(sql)
     debug()
 
-    for x in conn.execute(sql):
-        print(joinline(x))
+    result = list(conn.execute(sql))
+
+    if pretty:
+        maxfieldlen = [0] * len(wants)
+        for row in result:
+            for i, field in enumerate(row):
+               if len(field) > maxfieldlen[i]: maxfieldlen[i] = len(field)
+        collen = [(x + 2) for x in maxfieldlen[:-1]] + [0]
+        for row in result:
+            line = ''.join(field.ljust(collen[i]) for i, field in enumerate(row))
+            print(line)
+    else:
+        for x in result:
+            print(joinline(x))
