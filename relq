@@ -258,12 +258,12 @@ def makesqlconj(schema, wants, conj, bindings):
                 pname, colname = next(iter(preds[v]))
                 result += '\n\t\t\tAND {} = {}.{}'.format(schema[p.p][i], pname, colname)
         result += '\n\t)'
-    result += "\nORDER BY {} ASC".format(', '.join(wants))
     return result
 
 def makesql(schema, wants, rel, bindings):
     sqls = [makesqlconj(schema, wants, conj, bindings) for conj in rel]
-    return '\nUNION\n'.join(sqls)
+    query = '\nUNION\n'.join(sqls) + "\nORDER BY {} ASC".format(', '.join(wants))
+    return query 
 
 def lex(query):
     import re
