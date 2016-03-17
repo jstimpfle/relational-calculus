@@ -3,6 +3,9 @@
 import sys
 import sqlite3
 
+dodebug = False
+pretty = False
+
 class Predicate:
     def __init__(self, p, args, neg=False):
         self.p = p
@@ -148,7 +151,7 @@ def sepbyignore(sep, p):
 def identifier(stream):
     if stream.hasnext():
         x = stream.peek()
-        if x.isalnum() or x == '*' or x.startswith('"'):
+        if x == '*' or x.isalnum() or x.startswith('"'):
             return stream.pop()
 
 def predicate(stream):
@@ -311,6 +314,8 @@ def splitline(line):
     if quoted or escaped:
         print('Unexpected end of line: ' + line, file=sys.stderr)
         return None
+    if started:
+        out.append(w)
     return out
 
 def escapetoken(x):
@@ -327,12 +332,9 @@ def joinline(args):
         out.append(x)
     return '\t'.join(out)
 
-schema = {}
-conn = sqlite3.connect(':memory:')
-dodebug = False
-pretty = False
-
 def build_db(lines):
+    conn = sqlite3.connect(':memory:')
+    schema = {}
     defaultcolnames = list('abcdefghijklmnopqrstuvwxyz')
     for line in lines:
         words = splitline(line)
@@ -354,7 +356,7 @@ def build_db(lines):
             raise Exception('wrong number of values: ' + line + "   " + str(values))
         sql = 'INSERT INTO {} VALUES ({})'.format(tblname, ', '.join('?'*len(values)))
         conn.execute(sql, values)
-    return schema
+    return conn, schema
 
 def debug(*args):
     global dodebug
@@ -368,23 +370,27 @@ def parse_binding(x):
             return k, v
     return None
 
-if __name__ == '__main__':
-    bindings = {}
+def relq_main(args):
+    global dodebug
+    global pretty
 
-    args = tuple(sys.argv[1:])
+    bindings = {}
 
     while args and args[0].startswith('-'):
         if args[0] == '--debug':
             dodebug = True
             args = args[1:]
+        elif args[0] == '--pretty':
+            pretty = True
+            args = args[1:]
         elif args[0].startswith('-v'):
             x = parse_binding(args[0][2:])
             if x is None:
                 raise Exception("Invalid variable binding: " + args[0])
-            bindings[x[0]] = x[1]
-            args = args[1:]
-        elif args[0] == '--pretty':
-            pretty = True
+            var, val = x
+            if var in bindings:
+                raise Exception("Variable bound twice: " + var)
+            bindings[var] = val
             args = args[1:]
         else:
             raise Exception("Unrecognized command line argument: " + args[0])
@@ -392,15 +398,14 @@ if __name__ == '__main__':
     if len(args) != 2:
         print("""\
 Usage:
-
-{} [--debug] '<var> [<var>...]' '<DRC query>'  < input.txt
+    relq [--debug] [--pretty] [-v<var>=<value>...] '<var>[,<var>...]' '<DRC query>' < input.txt
 
 Example:
-
-./relc.py S,SD,L,LD 'student(S,SD) && immatriculated(S, "2016") && lecture(L,LD) && registered(S,L)'  < example.txt""".format(sys.argv[0], sys.argv[0]), file=sys.stderr)
+    relq -vY=2016 S,SD,L,LD 'student(S,SD) && immatriculated(S, Y) && lecture(L,LD) && registered(S,L)' < example.txt""", file=sys.stderr)
         sys.exit(1)
 
-    wants = args[0].replace(',',' ').split()
+    wants = args[0].split(',')
+
     tokens = lex(args[1])
     if tokens is None:
         raise Exception('Failed to lex query')
@@ -409,7 +414,7 @@ Example:
         raise Exception('Failed to parse query')
 
     debug('query parsed as', calc)
-    build_db(sys.stdin)
+    conn, schema = build_db(sys.stdin)
 
     debug()
     sql = makesql(schema, wants, calc, bindings)
@@ -419,14 +424,16 @@ Example:
     result = list(conn.execute(sql))
 
     if pretty:
-        maxfieldlen = [0] * len(wants)
+        colw = [0] * len(wants)
         for row in result:
-            for i, field in enumerate(row):
-               if len(field) > maxfieldlen[i]: maxfieldlen[i] = len(field)
-        collen = [(x + 2) for x in maxfieldlen[:-1]] + [0]
+            for i, x in enumerate(row[:-1]):
+                colw[i] = max(colw[i], len(x) + 2)
         for row in result:
-            line = ''.join(field.ljust(collen[i]) for i, field in enumerate(row))
+            line = ''.join(x.ljust(colw[i]) for i, x in enumerate(row))
             print(line)
     else:
-        for x in result:
-            print(joinline(x))
+        for row in result:
+            print(joinline(row))
+
+if __name__ == '__main__':
+    relq_main(sys.argv[1:])
