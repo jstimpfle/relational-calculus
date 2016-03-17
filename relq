@@ -330,7 +330,7 @@ def build_db(lines):
     defaultcolnames = list('abcdefghijklmnopqrstuvwxyz')
     for line in lines:
         words = splitline(line)
-        if not words or words[0].startswith('#') or words[0].startswith('!'):
+        if not words or (words[0][0] and words[0][0] in '!#%'):
             continue
         tblname = words[0]
         values = words[1:]
