@@ -1,8 +1,8 @@
 # relational-calculus
 
-This is a quick hack to evaluate if relational calculus (specifically, Domain
+This is an ugly hack to evaluate if relational calculus (specifically, Domain
 Relational Calculus) can be better suited than SQL for most simple queries with
-a few joins, and without aggregation.
+a few joins.
 
 Two command-line arguments are expected. The first gives the query variables in
 output order. The second gives a query in DRC using a superset of the query
