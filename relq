@@ -325,7 +325,8 @@ def makesql(schema, boundvars, getvars, conjs):
 
 def lex(query):
     out = []
-    exprs = [r'!', r'[a-zA-Z][a-zA-Z0-9]*', r'\*', r'"[^"]*"', r',', r'&&', r'\|\|',r'\(',r'\)']
+    exprs = [r'!', r'[a-zA-Z][a-zA-Z0-9]*', r'\*', r'"[^"]*"',
+             r',', r'&&', r'\|\|',r'\(',r'\)']
     while True:
         query = query.strip()
         if not query:
