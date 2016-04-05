@@ -3,22 +3,11 @@
 import re, sys, sqlite3
 
 dodebug = False
-pretty = False
 
 def debug(*args):
     global dodebug
     if dodebug:
         print(*args)
-
-class Predicate:
-    def __init__(self, p, args, neg=False):
-        self.p = p
-        self.args = args
-        self.neg = neg
-    def __str__(self):
-        return ('!' if self.neg else '') + self.p + '(' + ', '.join(self.args) + ')'
-    def __repr__(self):
-        return ('!' if self.neg else '') + self.p + '(' + ', '.join(self.args) + ')'
 
 class LookAhead:
     def __init__(self, it):
@@ -177,7 +166,7 @@ def predicate(stream):
     x = parenright(stream)
     if x is None:
         return None
-    return Predicate(p, args, neg)
+    return not neg, p, args
 
 def conjunction(stream):
     return sepbyignore(string('&&'), predicate)(stream)
@@ -203,77 +192,136 @@ def sql_string_literal(val):
     val = '"' + val + '"'
     return val
 
-def makesqlconj(schema, wants, conj, bindings):
-    froms = []
-    bound = []
-    preds = dict()
-    for p in conj:
-        if p.p not in schema:
-            raise Exception('No such table: %s' % p.p)
-        if len(p.args) != len(schema[p.p]):
-            raise Exception('Wrong number of arguments: %s' % p)
-    for i, p in enumerate(conj):
-        if not p.neg:
-            pred = '%s%s' % (p.p, i)
-            froms.append((p.p, pred))
-            for j, var in enumerate(p.args):
-                col = schema[p.p][j]
-                if var == '*':
-                    pass
-                elif var[0] == '"' or var.isdigit():
-                    bound.append((pred, col, var))
+def convert(schema, boundvars, getvars, conj):
+    bigtable = []
+    scantables = set()
+    variables = set()
+    colofvar = dict()
+    equalvars = dict()
+    valuebinds = []
+    notequal = dict()
+
+    for ispositive, table, bindings in conj:
+        if table not in schema:
+            raise Exception("No such table: {}".format(table))
+
+        if len(schema[table]) != len(bindings):
+            raise Exception("Table {} has {} columns, but {} queried"
+                    .format(table, len(schema[table]), len(bindings)))
+
+    for i, (ispositive, table, bindings) in enumerate(conj):
+        talias = "{}_{}".format(table, i)
+        bigtable.append((i, ispositive, table, talias, list(enumerate(bindings))))
+
+    for i, ispositive, table, talias, bindings in bigtable:
+        if ispositive:
+            scantables.add((table, talias))
+
+    for i, ispositive, table, talias, bindings in bigtable:
+        for _, var in bindings:
+            if var.isalpha():
+                variables.add(var)
+
+    for i, ispositive, table, talias, bindings in bigtable:
+        if ispositive:
+            for j, var in bindings:
+                if var.isalpha():
+                    if var not in colofvar:
+                        colofvar[var] = talias, schema[table][j], var
+
+    for var in getvars:
+        if var not in variables:
+            raise Exception("variable {} not bound anywhere".format(var))
+
+    for var in variables:
+        if var not in colofvar and var not in boundvars:
+            raise Exception("variable {} not bound in any positive predicate"
+                                                            .format(var))
+
+    for i, ispositive, table, talias, bindings in bigtable:
+        if ispositive:
+            for j, var in bindings:
+                if var.startswith('"') or var in boundvars:
+                    if var.startswith('"'):
+                        val = var[1:-1]  # XXX
+                    else:
+                        val = boundvars[var]
+                    valuebinds.append((talias, schema[table][j], val))
+                elif var.isalpha():
+                    if var not in equalvars:
+                        equalvars[var] = []
+                    equalvars[var].append((talias, schema[table][j]))
                 else:
-                    if var not in preds:
-                        preds[var] = []
-                    preds[var].append((pred, col))
-    for p in conj:
-        if p.neg:
-            for var in p.args:
-                if var != '*' and not var[0] == '"' and not var.isdigit() and not var in preds and not var in bindings:
-                    raise Exception('variable %s only bound in a negative clause in conjunction %s' % (var, conj))
-    for var in wants:
-        if var not in preds:
-            raise Exception('variable %s not bound in conjunction %s' % (var,conj))
-    result = 'SELECT DISTINCT'
-    xs = []
-    for var in wants:
-        pred, col = preds[var][0]
-        xs.append('\n\t%s.%s AS %s' % (pred, col, var))
-    result += ','.join(xs)
-    result += '\nFROM'
-    result += ','.join('\n\t%s %s' % (x, y) for x, y in froms)
-    result += '\nWHERE 1'
-    for var, val in bindings.items():
-        if var in preds:
-            pred, col = preds[var][0]
+                    assert(var == '*')
+
+    for i, ispositive, table, talias, bindings in bigtable:
+        if not ispositive:
+            notequalvars = []
+            notvaluebinds = []
+            for j, var in bindings:
+                talias1, col1, = talias, schema[table][j]
+                if var.startswith('"') or var in boundvars:
+                    if var.startswith('"'):
+                        val = var[1:-1]  # XXX
+                    else:
+                        val = boundvars[var]
+                    notvaluebinds.append((talias1, col1, val))
+                elif var.isalpha():
+                    talias2, col2, _ = colofvar[var]
+                    notequalvars.append((talias1, col1, talias2, col2))
+                else:
+                    assert(var == '*')
+            notequal[(table, talias)] = notequalvars, notvaluebinds
+
+    result = "SELECT DISTINCT\n"
+
+    result += ",\n".join(
+        "\t{}.{} AS {}".format(*colofvar[var])
+        for var in getvars
+    )
+    result += "\n"
+
+    result += "FROM\n"
+
+    result += ",\n".join(
+        "\t{} {}".format(table, talias)
+        for table, talias in scantables
+    )
+    result += "\n"
+
+    result += "WHERE 1\n"
+
+    for talias, col, val in valuebinds:
+        lit = sql_string_literal(val)
+        result += "\tAND {}.{} = {}\n".format(talias, col, lit)
+
+    for x in equalvars.values():
+        for (talias1, col1), (talias2, col2) in zip(x, x[1:]):
+            result += ("\tAND {}.{} = {}.{}\n"
+                                .format(talias1, col1, talias2, col2))
+
+    for table, talias in notequal:
+        result += ("\tAND NOT EXISTS(SELECT 1 FROM {} {} WHERE 1\n"
+                            .format(table, talias))
+        notequalvars, notvaluebinds = notequal[(table, talias)]
+
+        for talias1, col1, talias2, col2 in notequalvars:
+            result += ("\t\tAND {}.{} = {}.{}\n"
+                            .format(talias1, col1, talias2, col2))
+
+        for talias1, col1, val in notvaluebinds:
             lit = sql_string_literal(val)
-            result += '\n\tAND %s.%s = %s' % (pred, col, lit)
-    for pred, col, var in bound:
-        result += '\n\tAND %s.%s = %s' % (pred, col, var)
-    for same in preds.values():
-        pred1, col1 = same[0]
-        for pred2, col2 in same[1:]:
-            result += '\n\tAND %s.%s = %s.%s' % (pred1, col1, pred2, col2)
-    for p in (p for p in conj if p.neg):
-        result += '\n\tAND NOT EXISTS(SELECT 1 FROM %s WHERE 1' % p.p
-        for i, var in enumerate(p.args):
-            if var == '*':
-                pass
-            elif var[0] == '"':
-                result += '\n\t\t\tAND %s = %s' % (schema[p.p][i], var)
-            elif var in bindings and not var in preds:
-                lit = sql_string_literal(bindings[var])
-                result += '\n\t\t\tAND %s = %s' % (schema[p.p][i], lit)
-            else:
-                assert var in preds
-                pred, col = preds[var][0]
-                result += '\n\t\t\tAND %s = %s.%s' % (schema[p.p][i], pred, col)
-        result += '\n\t)'
+            result += ("\t\tAND {}.{} = {}\n"
+                            .format(talias1, col1, lit))
+
+        result += "\t)\n"
+
     return result
 
-def makesql(schema, wants, query, bindings):
-    sqls = [makesqlconj(schema, wants, conj, bindings) for conj in query]
-    return '\nUNION\n'.join(sqls) + "\nORDER BY %s ASC" % (', '.join(wants))
+
+def makesql(schema, boundvars, getvars, conjs):
+    sqls = [convert(schema, boundvars, getvars, conj) for conj in conjs]
+    return '\nUNION\n'.join(sqls) + "\nORDER BY %s ASC" % (', '.join(getvars))
 
 def lex(query):
     out = []
@@ -387,11 +435,12 @@ def parse_query(query_string):
         raise Exception('Failed to lex query')
     return relational_calculus(LookAhead(tokens))
 
-def relq_main(args):
-    global dodebug
-    global pretty
-
-    bindings = {}
+def parse_args(args):
+    pretty = None
+    dodebug = None
+    boundvars = {}
+    wants = None
+    conjs = None
 
     while args and args[0][:1] == '-':
         if args[0] == '--debug':
@@ -405,9 +454,9 @@ def relq_main(args):
             if x is None:
                 raise Exception("Invalid variable binding: " + args[0])
             var, val = x
-            if var in bindings:
+            if var in boundvars:
                 raise Exception("Variable bound twice: " + var)
-            bindings[var] = val
+            boundvars[var] = val
             args = args[1:]
         else:
             raise Exception("Unrecognized command line argument: " + args[0])
@@ -422,18 +471,26 @@ Example:
         sys.exit(1)
 
     wants = parse_selectvars(args[0])
-    query = parse_query(args[1])
+    conjs = parse_query(args[1])
 
     if wants is None:
         raise Exception("Bad query variables")
-    if query is None:
+    if conjs is None:
         raise Exception('Failed to parse query')
-    debug('query string parsed as', query)
+
+    return dodebug, pretty, wants, boundvars, conjs
+
+def relq_main(args):
+    global dodebug
+
+    dodebug, pretty, wants, boundvars, conjs = parse_args(args)
+    debug('query string parsed as', conjs)
 
     conn, schema = build_db(sys.stdin)
 
-    sql = makesql(schema, wants, query, bindings)
+    sql = makesql(schema, boundvars, wants, conjs)
     debug(sql)
+
     result = list(conn.execute(sql))
 
     if pretty:
