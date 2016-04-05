@@ -390,6 +390,8 @@ def build_db(lines):
     defaultcolnames = ['_%d_' % x for x in range(1, 100)]
     conn = sqlite3.connect(':memory:')
     schema = {}
+    rows = {}
+
     for line in lines:
         line = line.strip()
         if not line or line[0] in '!#%':
@@ -402,6 +404,7 @@ def build_db(lines):
         if len(values) > len(defaultcolnames):
             raise Exception('sorry, too many values: ' + line)
         if tblname not in schema:
+            rows[tblname] = []
             schema[tblname] = defaultcolnames[:len(values)]
             names = [x + ' VARCHAR NOT NULL' for x in schema[tblname]]
             sql = 'CREATE TABLE %s (%s)' % (tblname, ', '.join(names))
@@ -409,8 +412,13 @@ def build_db(lines):
             conn.execute(sql)
         if len(values) != len(schema[tblname]):
             raise Exception('too few or too many values: %s %s' % (tblname, values))
-        sql = 'INSERT INTO %s VALUES (%s)' % (tblname, ', '.join('?' * len(values)))
-        conn.execute(sql, values)
+        rows[tblname].append(values)
+
+    for tblname in rows:
+        numcols = len(schema[tblname])
+        sql = 'INSERT INTO %s VALUES (%s)' % (tblname, ', '.join('?' * numcols))
+        conn.executemany(sql, rows[tblname])
+
     return conn, schema
 
 def parse_binding(x):
