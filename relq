@@ -206,7 +206,7 @@ def convert(schema, boundvars, getvars, conj):
             raise Exception("No such table: {}".format(table))
 
         if len(schema[table]) != len(bindings):
-            raise Exception("Table {} has {} columns, but {} queried"
+            raise Exception("Table {} has {} columns, but {} were queried"
                     .format(table, len(schema[table]), len(bindings)))
 
     for i, (ispositive, table, bindings) in enumerate(conj):
@@ -252,7 +252,7 @@ def convert(schema, boundvars, getvars, conj):
                         equalvars[var] = []
                     equalvars[var].append((talias, schema[table][j]))
                 else:
-                    assert(var == '*')
+                    assert var == '*'
 
     for i, ispositive, table, talias, bindings in bigtable:
         if not ispositive:
@@ -270,7 +270,7 @@ def convert(schema, boundvars, getvars, conj):
                     talias2, col2, _ = colofvar[var]
                     notequalvars.append((talias1, col1, talias2, col2))
                 else:
-                    assert(var == '*')
+                    assert var == '*'
             notequal[(table, talias)] = notequalvars, notvaluebinds
 
     result = "SELECT DISTINCT\n"

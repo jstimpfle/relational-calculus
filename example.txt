@@ -1,4 +1,4 @@
-# this is CSSV format as specified at https://github.com/jstimpfle/cssv
+# this is WSL format as specified at https://github.com/jstimpfle/wsl
 
 lecture algebra1 "Algebra 1"
 lecture proglang1 "Introduction to Programming Languages"
